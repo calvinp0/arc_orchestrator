@@ -104,9 +104,11 @@ export const buildSendKeysControlCommand = (
   target: string,
   keys: string,
   withEnter: boolean,
-): string => {
+): string[] => {
   const literal = `send-keys -t ${escapeArg(target)} -l ${escapeArg(keys)}`;
-  return withEnter ? `${literal} Enter` : literal;
+  if (!withEnter) return [literal];
+  const enter = `send-keys -t ${escapeArg(target)} Enter`;
+  return [literal, enter];
 };
 
 const decodeTmuxData = (chunks: string[]): string => {
@@ -263,7 +265,10 @@ const api = {
       const target = windowId?.trim() && windowId.trim().length
         ? windowId.trim()
         : `${session}:${windowIndex}`;
-      await sendControlCommand(buildSendKeysControlCommand(target, keys, withEnter));
+      const commands = buildSendKeysControlCommand(target, keys, withEnter);
+      for (const command of commands) {
+        await sendControlCommand(command);
+      }
       return;
     }
 
@@ -1313,12 +1318,24 @@ async function onSendKeys(keys: string, enter = true) {
   return (
     <div className="runs-page">
       <h2>Active ARC Runs</h2>
-      {mode.kind === "remote" && (
-        <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>
-          Remote: <code>{remoteBadge}</code>
+      <div className="runs-page__status">
+        <div className="runs-page__status-remote" aria-live="polite">
+          {mode.kind === "remote" ? (
+            <>
+              Remote: <code>{remoteBadge}</code>
+            </>
+          ) : (
+            "\u00A0"
+          )}
         </div>
-      )}
-      {msg && <div>{msg}</div>}
+        <div
+          className={`runs-page__status-message${msg ? " runs-page__status-message--active" : ""}`}
+          role="status"
+          aria-live="polite"
+        >
+          {msg || "\u00A0"}
+        </div>
+      </div>
 
       {(remoteLoading || sessionLoading) && (
         <div className="loading-strip" role="progressbar" aria-hidden="true">
