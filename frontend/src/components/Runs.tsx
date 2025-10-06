@@ -4,6 +4,12 @@ import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { getRemotePassword, onRemotePasswordChange } from "../lib/remoteSecrets";
 import { safeLoadConfig } from "../lib/store";
+import {
+  buildWindowCacheKey,
+  clearWindowCacheForSession,
+  pruneWindowCache,
+  renameSessionInCache,
+} from "../lib/windowCache";
 
 type Session = { name: string; windows: number; attached: boolean };
 type TmuxWindow = { index: number; id: string; name: string; active: boolean; panes: number };
@@ -79,6 +85,7 @@ export default function Runs() {
   const [controlDisconnected, setControlDisconnected] = useState(false);
   const inFlight = useRef({ listWindows: 0, capture: 0, sessions: 0 });
   const nameCacheRef = useRef(new Map<string, string>());
+  const paneCacheRef = useRef(new Map<string, string>());
   const remoteSessionToken = useRef(0);
   const remoteBadge =
     mode.kind === "remote"
@@ -96,6 +103,7 @@ export default function Runs() {
   });
   const controlStartedRef = useRef(false);
   const paneRefreshTimerRef = useRef<number | null>(null);
+  const localBootstrapRef = useRef(false);
 
   useEffect(() => {
     activeWinRef.current = activeWin;
@@ -202,6 +210,13 @@ const api = {
       ? invoke("remote_tmux_new_window", r(args))
       : invoke("tmux_new_window", args);
   },
+
+  renameSession: async (session: string, newName: string) =>
+    mode.kind === "remote"
+      ? invoke("remote_tmux_rename_session", {
+          payload: { profile: (mode as any).profile, session, new_name: newName },
+        })
+      : invoke("tmux_rename_session", { payload: { session, new_name: newName } }),
 
   killWindow: async (session: string, windowIndex: number, windowId?: string | null) => {
     const args: Record<string, any> = { session, window_index: windowIndex };
@@ -474,6 +489,8 @@ const refreshPaneForCurrent = async () => {
   const indexTarget = activeWinRef.current ?? activeWin;
   if (indexTarget === null || indexTarget === undefined) return;
   const pane = await getPane(activeSession, indexTarget, activeWinIdRef.current ?? activeWinId);
+  const key = paneKeyFromParts(activeSession, indexTarget, activeWinIdRef.current ?? activeWinId);
+  paneCacheRef.current.set(key, pane || " ");
   setPaneText(pane || " ");
 };
 
@@ -494,10 +511,14 @@ const schedulePaneRefresh = () => {
     return `remote:${prof.user}@${prof.host}:${prof.port ?? 22}`;
   };
 
-  const cacheKeyFor = (sessionName: string, w: TmuxWindow): string => {
-    const base = w.id?.trim() ? `id:${w.id.trim()}` : `idx:${w.index}`;
-    return `${cacheScope()}/${sessionName}/${base}`;
-  };
+  const cacheKeyFor = (sessionName: string, w: TmuxWindow): string =>
+    buildWindowCacheKey(cacheScope(), sessionName, w.index, w.id ?? null);
+
+  const paneKeyFromParts = (
+    sessionName: string,
+    index: number,
+    id?: string | null,
+  ): string => buildWindowCacheKey(cacheScope(), sessionName, index, id ?? null);
 
   const normalizeWindows = (sessionName: string, ws: TmuxWindow[]): TmuxWindow[] => {
     const byKey = new Map<string, TmuxWindow>();
@@ -551,6 +572,18 @@ const schedulePaneRefresh = () => {
     const s = await withTimeout(api.listSessions(), mode.kind === "remote" ? REMOTE_TIMEOUT_MS : 6000);
     if (token !== inFlight.current.sessions) return;   // stale
     setSessions(s);
+    const scope = cacheScope();
+    const allowed = new Set(s.map((x) => x.name));
+    const pruneBySessions = <T,>(map: Map<string, T>) => {
+      for (const key of Array.from(map.keys())) {
+        if (!key.startsWith(`${scope}/`)) continue;
+        const rest = key.slice(scope.length + 1);
+        const sessionKey = rest.split("/")[0] ?? "";
+        if (!allowed.has(sessionKey)) map.delete(key);
+      }
+    };
+    pruneBySessions(nameCacheRef.current);
+    pruneBySessions(paneCacheRef.current);
     const keep = activeSession && s.some(x => x.name === activeSession);
     if (!keep) {
       if (s.length) {
@@ -587,6 +620,7 @@ async function loadWindows(session: string) {
     const normalized = normalizeWindows(session, ws);
     console.debug("loadWindows", session, normalized);
     setWindows(normalized);
+    pruneWindowCache(paneCacheRef.current, cacheScope(), session, normalized);
     const currentActive = activeWinRef.current;
     if (!normalized.length) {
       setActiveWin(null);
@@ -655,11 +689,15 @@ async function loadWindows(session: string) {
         const preferred = normalized.find((w) => w.active) ?? normalized[0] ?? null;
         let pane = "";
         if (preferred) {
+          const cached = paneCacheRef.current.get(cacheKeyFor(sessionName, preferred));
+          if (cached) setPaneText(cached);
           pane = await getPane(sessionName, preferred.index, preferred.id ?? null, 200, profile);
+          paneCacheRef.current.set(cacheKeyFor(sessionName, preferred), pane || " ");
         }
         if (token !== remoteSessionToken.current) return;
 
         setWindows(normalized);
+        pruneWindowCache(paneCacheRef.current, cacheScope(), sessionName, normalized);
         if (preferred) {
           setActiveWin(preferred.index);
           setActiveWinId(preferred.id);
@@ -704,6 +742,7 @@ async function loadWindows(session: string) {
     setRemoteLoading(false);
     setSessionLoading(false);
     nameCacheRef.current.clear();
+    paneCacheRef.current.clear();
     remoteSessionToken.current++;
     if (timerRef.current) {
       window.clearTimeout(timerRef.current);
@@ -814,9 +853,47 @@ function switchToLocal() {
 
   async function onKillSession() {
     if (!activeSession) return;
+    const scope = cacheScope();
+    clearWindowCacheForSession(nameCacheRef.current, scope, activeSession);
+    clearWindowCacheForSession(paneCacheRef.current, scope, activeSession);
     await api.killSession(activeSession);
     setActiveSession(null);
     await refreshSessions();
+  }
+
+  async function onRenameSession(sessionName: string) {
+    const proposed = window.prompt("Rename session", sessionName);
+    const next = proposed?.trim();
+    if (!next || next === sessionName) return;
+    if ((sessions ?? []).some((s) => s.name === next)) {
+      setMsg(`⚠️ Session "${next}" already exists.`);
+      return;
+    }
+    try {
+      setBusy(true);
+      setPollPaused(true);
+      await api.renameSession(sessionName, next);
+      const scope = cacheScope();
+      renameSessionInCache(nameCacheRef.current, scope, sessionName, next);
+      renameSessionInCache(paneCacheRef.current, scope, sessionName, next);
+      setSessions((prev) =>
+        prev?.map((s) => (s.name === sessionName ? { ...s, name: next } : s)) ?? prev,
+      );
+      const wasActive = activeSession === sessionName;
+      if (wasActive) {
+        setActiveSession(next);
+      }
+      await refreshSessions();
+      if (wasActive && mode.kind === "remote") {
+        selectSession(next);
+      }
+      setMsg(`Renamed session to "${next}".`);
+    } catch (e: any) {
+      setMsg(`⚠️ Rename session failed: ${String(e?.message ?? e)}`);
+    } finally {
+      setBusy(false);
+      setPollPaused(false);
+    }
   }
 async function onCreateWindow() {
   if (!activeSession) return;
@@ -920,6 +997,7 @@ async function onSendKeys(keys: string, enter = true) {
       const normalized = normalizeWindows(activeSession, remoteWins);
       console.debug("ensureWindow list", activeSession, normalized);
       setWindows(normalized);
+      pruneWindowCache(paneCacheRef.current, cacheScope(), activeSession, normalized);
       const refreshed = normalized.find((w) => w.index === index) ?? null;
       if (refreshed && index === activeWin) {
         setActiveWin(refreshed.index);
@@ -932,6 +1010,16 @@ async function onSendKeys(keys: string, enter = true) {
   }
 
   // --- effects ---
+  useEffect(() => {
+    if (mode.kind !== "local") {
+      localBootstrapRef.current = false;
+      return;
+    }
+    if (sessions !== null || localBootstrapRef.current) return;
+    localBootstrapRef.current = true;
+    void refreshSessions();
+  }, [mode.kind, sessions]);
+
   // 1) cancel interval whenever mode changes
   useEffect(() => {
     if (timerRef.current) {
@@ -945,8 +1033,15 @@ async function onSendKeys(keys: string, enter = true) {
   // 3) windows when session/mode changes
   useEffect(() => {
     if (!activeSession || mode.kind !== "local") return;
-    void loadWindows(activeSession);
-  }, [activeSession, mode]);
+    let cancelled = false;
+    void (async () => {
+      await loadWindows(activeSession);
+      if (!cancelled) await refreshPaneForCurrent();
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSession, mode.kind]);
 
   // 4) pane poller
   useEffect(() => {
@@ -991,6 +1086,8 @@ async function onSendKeys(keys: string, enter = true) {
         if (mode.kind === "remote" && controlReady()) {
           const pane = await getPane(activeSession, indexTarget, idTarget ?? null);
           if (cancelled) return baseDelay;
+          const key = paneKeyFromParts(activeSession, indexTarget, idTarget ?? null);
+          paneCacheRef.current.set(key, pane || " ");
           setPaneText(pane || " ");
           setMsg((prev) => (prev.startsWith("⚠️ Remote") ? "" : prev));
           return baseDelay;
@@ -1003,6 +1100,9 @@ async function onSendKeys(keys: string, enter = true) {
         if (cancelled) return baseDelay;
         const normalized = normalizeWindows(activeSession, list);
         setWindows(normalized);
+        pruneWindowCache(paneCacheRef.current, cacheScope(), activeSession, normalized);
+        const key = paneKeyFromParts(activeSession, indexTarget, idTarget ?? null);
+        paneCacheRef.current.set(key, pane || " ");
         setPaneText(pane || " ");
         if (!normalized.some((w) => w.index === indexTarget) && normalized.length) {
           setActiveWin(normalized[0].index);
@@ -1174,7 +1274,8 @@ async function onSendKeys(keys: string, enter = true) {
             <button key={s.name}
               className={`tab tab--condensed ${s.name === activeSession ? "tab--active" : ""}`}
               onClick={() => selectSession(s.name)}
-              title={`${s.windows} ${s.windows === 1 ? "window" : "windows"}`}
+              onContextMenu={(e) => { e.preventDefault(); void onRenameSession(s.name); }}
+              title={`${s.windows} ${s.windows === 1 ? "window" : "windows"} • Right-click to rename`}
               disabled={mode.kind === "remote" && (remoteLoading || sessionLoading)}
             >
               <span className="tab__label">{s.name}</span>
@@ -1223,7 +1324,14 @@ async function onSendKeys(keys: string, enter = true) {
                    setActiveWinId(w.id);
                    activeWinRef.current = w.index;
                    activeWinIdRef.current = w.id ?? null;
-                   if (mode.kind === "remote") schedulePaneRefresh();
+                   const cachedKey = paneKeyFromParts(activeSession, w.index, w.id ?? null);
+                   const cached = paneCacheRef.current.get(cachedKey);
+                   if (cached) setPaneText(cached);
+                   if (mode.kind === "remote") {
+                     schedulePaneRefresh();
+                   } else {
+                     void refreshPaneForCurrent();
+                   }
                  }}
                  onContextMenu={(e) => { e.preventDefault(); void onRenameWindow(w.index); }}
                  title={`${w.panes} ${w.panes === 1 ? "pane" : "panes"} • Right-click to rename`}>
