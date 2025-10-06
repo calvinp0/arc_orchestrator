@@ -131,21 +131,30 @@ describe("cache helpers", () => {
 });
 
 describe("buildSendKeysControlCommand", () => {
-  it("includes literal flag and enter when requested", () => {
-    expect(buildSendKeysControlCommand("arc:0", "ls -la", true)).toBe(
-      "send-keys -t arc:0 -l 'ls -la' Enter",
-    );
+  it("emits separate literal and enter commands when requested", () => {
+    expect(buildSendKeysControlCommand("arc:0", "ls -la", true)).toEqual([
+      "send-keys -t arc:0 -l 'ls -la'",
+      "send-keys -t arc:0 Enter",
+    ]);
   });
 
-  it("omits enter when not requested", () => {
-    expect(buildSendKeysControlCommand("local", "whoami", false)).toBe(
+  it("omits the enter command when not requested", () => {
+    expect(buildSendKeysControlCommand("local", "whoami", false)).toEqual([
       "send-keys -t local -l whoami",
-    );
+    ]);
   });
 
   it("escapes quotes and whitespace in the literal payload", () => {
-    expect(buildSendKeysControlCommand("pane @1", "echo 'hi'", true)).toBe(
-      "send-keys -t 'pane @1' -l 'echo '\"'\"'hi'\"'\"'' Enter",
-    );
+    expect(buildSendKeysControlCommand("pane @1", "echo 'hi'", true)).toEqual([
+      "send-keys -t 'pane @1' -l 'echo '\"'\"'hi'\"'\"''",
+      "send-keys -t 'pane @1' Enter",
+    ]);
+  });
+
+  it("preserves embedded newlines in the literal payload", () => {
+    expect(buildSendKeysControlCommand("arc:1", "printf 'a\\n'", true)).toEqual([
+      "send-keys -t arc:1 -l 'printf '\"'\"'a\\n'\"'\"''",
+      "send-keys -t arc:1 Enter",
+    ]);
   });
 });
