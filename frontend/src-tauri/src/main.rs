@@ -416,6 +416,44 @@ fn tmux_capture_pane(payload: JsonValue) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).to_string())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TmuxCommand {
+    args: Vec<String>,
+}
+
+fn build_tmux_send_keys_commands(target: &str, keys: &str, with_enter: bool) -> Vec<TmuxCommand> {
+    let mut commands = vec![TmuxCommand {
+        args: vec![
+            "send-keys".into(),
+            "-t".into(),
+            target.to_string(),
+            "-l".into(),
+            keys.to_string(),
+        ],
+    }];
+    if with_enter {
+        commands.push(TmuxCommand {
+            args: vec![
+                "send-keys".into(),
+                "-t".into(),
+                target.to_string(),
+                "Enter".into(),
+            ],
+        });
+    }
+    commands
+}
+
+fn format_remote_tmux_command(command: &TmuxCommand) -> String {
+    use std::borrow::Cow;
+    let escaped: Vec<String> = command
+        .args
+        .iter()
+        .map(|arg| shell_escape::escape(Cow::from(arg.as_str())).to_string())
+        .collect();
+    format!("tmux {}", escaped.join(" "))
+}
+
 #[tauri::command]
 fn tmux_send_keys(payload: JsonValue) -> Result<(), String> {
     let path = which("tmux").map_err(|e| e.to_string())?;
@@ -443,19 +481,14 @@ fn tmux_send_keys(payload: JsonValue) -> Result<(), String> {
         .or_else(|| payload.get("withEnter").and_then(|v| v.as_bool()))
         .unwrap_or(false);
     let target = window_id.unwrap_or_else(|| format!("{}:{}", session, idx));
-    let mut command = PCommand::new(&path);
-    command
-        .arg("send-keys")
-        .arg("-t")
-        .arg(&target)
-        .arg("-l")
-        .arg(&keys);
-    if with_enter {
-        command.arg("Enter");
-    }
-    let out = command.output().map_err(|e| e.to_string())?;
-    if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr).to_string());
+    let commands = build_tmux_send_keys_commands(&target, keys, with_enter);
+    for command in commands {
+        let mut proc = PCommand::new(&path);
+        proc.args(&command.args);
+        let out = proc.output().map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).to_string());
+        }
     }
     Ok(())
 }
@@ -794,7 +827,6 @@ fn remote_tmux_control_send(
 
 #[tauri::command]
 fn remote_tmux_send_keys(payload: JsonValue) -> Result<(), String> {
-    use std::borrow::Cow;
     let profile: HostProfile = serde_json::from_value(
         payload
             .get("profile")
@@ -826,21 +858,81 @@ fn remote_tmux_send_keys(payload: JsonValue) -> Result<(), String> {
         .and_then(|v| v.as_bool())
         .or_else(|| payload.get("withEnter").and_then(|v| v.as_bool()))
         .unwrap_or(false);
-    let raw_target = window_id.unwrap_or_else(|| format!("{}:{}", session, idx));
-    let target = shell_escape::escape(Cow::from(raw_target));
-    let mut command = format!(
-        r#"tmux send-keys -t {} -l {}"#,
-        target,
-        shell_escape::escape(Cow::from(keys))
-    );
-    if with_enter {
-        command.push_str(" Enter");
-    }
-    let out = run_remote_cmd(&c, command)?;
-    if out.code != 0 {
-        return Err(out.stderr);
+    let target = window_id.unwrap_or_else(|| format!("{}:{}", session, idx));
+    let commands = build_tmux_send_keys_commands(&target, keys, with_enter);
+    for command in commands {
+        let formatted = format_remote_tmux_command(&command);
+        let out = run_remote_cmd(&c, formatted)?;
+        if out.code != 0 {
+            return Err(out.stderr);
+        }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        build_tmux_send_keys_commands,
+        format_remote_tmux_command,
+        TmuxCommand,
+    };
+
+    #[test]
+    fn build_commands_include_enter_when_requested() {
+        let commands = build_tmux_send_keys_commands("arc:0", "ls -la", true);
+        assert_eq!(
+            commands,
+            vec![
+                TmuxCommand {
+                    args: vec![
+                        "send-keys".into(),
+                        "-t".into(),
+                        "arc:0".into(),
+                        "-l".into(),
+                        "ls -la".into(),
+                    ],
+                },
+                TmuxCommand {
+                    args: vec![
+                        "send-keys".into(),
+                        "-t".into(),
+                        "arc:0".into(),
+                        "Enter".into(),
+                    ],
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn build_commands_omit_enter_when_not_requested() {
+        let commands = build_tmux_send_keys_commands("arc:1", "whoami", false);
+        assert_eq!(
+            commands,
+            vec![TmuxCommand {
+                args: vec![
+                    "send-keys".into(),
+                    "-t".into(),
+                    "arc:1".into(),
+                    "-l".into(),
+                    "whoami".into(),
+                ],
+            }]
+        );
+    }
+
+    #[test]
+    fn remote_format_escapes_arguments() {
+        let commands = build_tmux_send_keys_commands("pane @1", "echo 'hi'", true);
+        let literal = format_remote_tmux_command(&commands[0]);
+        let enter = format_remote_tmux_command(&commands[1]);
+        assert_eq!(
+            literal,
+            "tmux send-keys -t 'pane @1' -l 'echo '"'"'hi'"'"''"
+        );
+        assert_eq!(enter, "tmux send-keys -t 'pane @1' Enter");
+    }
 }
 
 #[tauri::command]
