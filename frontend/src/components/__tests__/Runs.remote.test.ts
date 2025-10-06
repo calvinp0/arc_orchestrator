@@ -7,6 +7,7 @@ import {
   sessionCacheKey,
   sessionCacheKeyForScope,
   renameWindowsCacheEntry,
+  buildSendKeysControlCommand,
   type HostProfile,
   type Mode,
   type TmuxWindow,
@@ -126,5 +127,25 @@ describe("cache helpers", () => {
     // renaming a non-existent entry is a no-op
     renameWindowsCacheEntry(cache, scope, "missing", "noop");
     expect(cache.size).toBe(1);
+  });
+});
+
+describe("buildSendKeysControlCommand", () => {
+  it("includes literal flag and enter when requested", () => {
+    expect(buildSendKeysControlCommand("arc:0", "ls -la", true)).toBe(
+      "send-keys -t arc:0 -l 'ls -la' Enter",
+    );
+  });
+
+  it("omits enter when not requested", () => {
+    expect(buildSendKeysControlCommand("local", "whoami", false)).toBe(
+      "send-keys -t local -l whoami",
+    );
+  });
+
+  it("escapes quotes and whitespace in the literal payload", () => {
+    expect(buildSendKeysControlCommand("pane @1", "echo 'hi'", true)).toBe(
+      "send-keys -t 'pane @1' -l 'echo '\"'\"'hi'\"'\"'' Enter",
+    );
   });
 });

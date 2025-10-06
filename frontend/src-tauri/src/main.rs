@@ -443,21 +443,19 @@ fn tmux_send_keys(payload: JsonValue) -> Result<(), String> {
         .or_else(|| payload.get("withEnter").and_then(|v| v.as_bool()))
         .unwrap_or(false);
     let target = window_id.unwrap_or_else(|| format!("{}:{}", session, idx));
-    let out = PCommand::new(&path)
-        .args(["send-keys", "-t", &target, &keys])
-        .output()
-        .map_err(|e| e.to_string())?;
+    let mut command = PCommand::new(&path);
+    command
+        .arg("send-keys")
+        .arg("-t")
+        .arg(&target)
+        .arg("-l")
+        .arg(&keys);
+    if with_enter {
+        command.arg("Enter");
+    }
+    let out = command.output().map_err(|e| e.to_string())?;
     if !out.status.success() {
         return Err(String::from_utf8_lossy(&out.stderr).to_string());
-    }
-    if with_enter {
-        let out2 = PCommand::new(&path)
-            .args(["send-keys", "-t", &target, "Enter"])
-            .output()
-            .map_err(|e| e.to_string())?;
-        if !out2.status.success() {
-            return Err(String::from_utf8_lossy(&out2.stderr).to_string());
-        }
     }
     Ok(())
 }
@@ -828,22 +826,19 @@ fn remote_tmux_send_keys(payload: JsonValue) -> Result<(), String> {
         .and_then(|v| v.as_bool())
         .or_else(|| payload.get("withEnter").and_then(|v| v.as_bool()))
         .unwrap_or(false);
-    let escaped_session = shell_escape::escape(session.into());
-    let target = window_id.unwrap_or_else(|| format!("{}:{}", escaped_session, idx));
-    let first = format!(
-        r#"tmux send-keys -t {} {}"#,
+    let raw_target = window_id.unwrap_or_else(|| format!("{}:{}", session, idx));
+    let target = shell_escape::escape(Cow::from(raw_target));
+    let mut command = format!(
+        r#"tmux send-keys -t {} -l {}"#,
         target,
         shell_escape::escape(Cow::from(keys))
     );
-    let out = run_remote_cmd(&c, first.clone())?;
+    if with_enter {
+        command.push_str(" Enter");
+    }
+    let out = run_remote_cmd(&c, command)?;
     if out.code != 0 {
         return Err(out.stderr);
-    }
-    if with_enter {
-        let out2 = run_remote_cmd(&c, format!(r#"tmux send-keys -t {} Enter"#, target))?;
-        if out2.code != 0 {
-            return Err(out2.stderr);
-        }
     }
     Ok(())
 }

@@ -87,6 +87,53 @@ export const renameWindowsCacheEntry = (
 
 const REMOTE_TIMEOUT_MS = 12000;
 
+const escapeArg = (value: string) => {
+  if (/^[A-Za-z0-9_@:\-]+$/.test(value)) return value;
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
+};
+
+const WINDOW_FORMAT = '#{window_index}\t#{window_id}\t#{window_name}\t#{?window_active,1,0}\t#{window_panes}';
+
+const buildListWindowsCommand = (session: string) =>
+  `list-windows -t ${escapeArg(session)} -F "${WINDOW_FORMAT}"`;
+
+const buildCapturePaneCommand = (target: string, lines = 200) =>
+  `capture-pane -p -t ${escapeArg(target)} -S -${Math.abs(lines)} -J`;
+
+export const buildSendKeysControlCommand = (
+  target: string,
+  keys: string,
+  withEnter: boolean,
+): string => {
+  const literal = `send-keys -t ${escapeArg(target)} -l ${escapeArg(keys)}`;
+  return withEnter ? `${literal} Enter` : literal;
+};
+
+const decodeTmuxData = (chunks: string[]): string => {
+  const joined = chunks.join("");
+  const octalReplaced = joined.replace(/\\(\d{3})/g, (_, digits) =>
+    String.fromCharCode(parseInt(digits, 8))
+  );
+  return octalReplaced.replace(/\\\\/g, "\\");
+};
+
+const parseWindowsData = (session: string, chunks: string[]): TmuxWindow[] => {
+  const decoded = decodeTmuxData(chunks);
+  return decoded
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const parts = line.split("\t");
+      const index = Number(parts[0] ?? "0");
+      const id = parts[1]?.trim() || "";
+      const name = parts[2] ?? "";
+      const active = (parts[3] ?? "0") === "1";
+      const panes = Number(parts[4] ?? "1");
+      return { index, id, name, active, panes };
+    });
+};
+
 export default function Runs() {
   // --- state/refs ---
   const [sessions, setSessions] = useState<Session[] | null>(null);
@@ -216,10 +263,7 @@ const api = {
       const target = windowId?.trim() && windowId.trim().length
         ? windowId.trim()
         : `${session}:${windowIndex}`;
-      await sendControlCommand(`send-keys -t ${escapeArg(target)} -- ${escapeArg(keys)}`);
-      if (withEnter) {
-        await sendControlCommand(`send-keys -t ${escapeArg(target)} Enter`);
-      }
+      await sendControlCommand(buildSendKeysControlCommand(target, keys, withEnter));
       return;
     }
 
@@ -386,44 +430,6 @@ function handleControlLine(line: string) {
     return;
   }
 }
-
-const escapeArg = (value: string) => {
-  if (/^[A-Za-z0-9_@:\-]+$/.test(value)) return value;
-  return `'${value.replace(/'/g, `'"'"'`)}'`;
-};
-
-const WINDOW_FORMAT = '#{window_index}\t#{window_id}\t#{window_name}\t#{?window_active,1,0}\t#{window_panes}';
-
-const buildListWindowsCommand = (session: string) =>
-  `list-windows -t ${escapeArg(session)} -F "${WINDOW_FORMAT}"`;
-
-const buildCapturePaneCommand = (target: string, lines = 200) =>
-  `capture-pane -p -t ${escapeArg(target)} -S -${Math.abs(lines)} -J`;
-
-const decodeTmuxData = (chunks: string[]): string => {
-  const joined = chunks.join("");
-  const octalReplaced = joined.replace(/\\(\d{3})/g, (_, digits) =>
-    String.fromCharCode(parseInt(digits, 8))
-  );
-  return octalReplaced.replace(/\\\\/g, "\\");
-};
-
-const parseWindowsData = (session: string, chunks: string[]): TmuxWindow[] => {
-  const decoded = decodeTmuxData(chunks);
-  return decoded
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const parts = line.split("\t");
-      const index = Number(parts[0] ?? "0");
-      const id = parts[1]?.trim() || "";
-      const name = parts[2] ?? "";
-      const active = (parts[3] ?? "0") === "1";
-      const panes = Number(parts[4] ?? "1");
-      return { index, id, name, active, panes };
-  });
-};
 
 const sendControlCommand = (command: string): Promise<string[]> => {
   const control = controlRef.current;
@@ -1317,6 +1323,7 @@ async function onSendKeys(keys: string, enter = true) {
       {(remoteLoading || sessionLoading) && (
         <div className="loading-strip" role="progressbar" aria-hidden="true">
           <div className="loading-strip__bar" />
+          <div className="loading-strip__pulse" />
         </div>
       )}
 
