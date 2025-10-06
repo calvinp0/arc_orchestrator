@@ -7,7 +7,7 @@ import { safeLoadConfig } from "../lib/store";
 
 type Session = { name: string; windows: number; attached: boolean };
 type TmuxWindow = { index: number; id: string; name: string; active: boolean; panes: number };
-type HostProfile = {
+export type HostProfile = {
   host: string;
   port?: number;
   user: string;
@@ -18,7 +18,7 @@ type HostProfile = {
   password?: string;  // injected at runtime when auth=password
 };
 
-type Mode =
+export type Mode =
   | { kind: "local" }
   | { kind: "remote"; profile: HostProfile };
 
@@ -34,6 +34,25 @@ type ControlPending = {
   reject: (err: Error) => void;
   data: string[];
 };
+
+export const cloneProfile = (profile: HostProfile): HostProfile => ({
+  ...profile,
+  password: profile.password,
+  key_path: profile.key_path,
+  key_pass: profile.key_pass,
+});
+
+export const resolveEffectiveProfile = (
+  mode: Mode,
+  profileOverride?: HostProfile | null,
+): HostProfile | null => {
+  if (profileOverride) return cloneProfile(profileOverride);
+  if (mode.kind === "remote") return cloneProfile(mode.profile);
+  return null;
+};
+
+export const isRemoteLike = (mode: Mode, profileOverride?: HostProfile | null): boolean =>
+  resolveEffectiveProfile(mode, profileOverride) !== null;
 
 const REMOTE_TIMEOUT_MS = 12000;
 
@@ -106,24 +125,23 @@ export default function Runs() {
     controlSessionKeyRef.current = controlSessionKey;
   }, [controlSessionKey]);
 
-const cloneProfile = (profile: HostProfile): HostProfile => ({
-  ...profile,
-  password: profile.password,
-  key_path: profile.key_path,
-  key_pass: profile.key_pass,
-});
-
 const controlSessionKeyFor = (profile: HostProfile, session: string) =>
   `${profile.user}@${profile.host}:${profile.port ?? 22}#${session}`;
 
-  const both = (args: Record<string, any>) => {
+const both = (args: Record<string, any>) => {
   const out = { ...args };
   if ("window_index" in out) out.windowIndex = out.window_index;
   if ("with_enter" in out) out.withEnter = out.with_enter;
   if ("window_id" in out) out.windowId = out.window_id;
   return out;
 };
-const r = (payload: Record<string, any>) => ({ profile: (mode as any).profile, ...payload });
+const r = (payload: Record<string, any>, profileOverride?: HostProfile | null) => {
+  const profile = resolveEffectiveProfile(mode, profileOverride);
+  if (!profile) {
+    throw new Error("remote profile unavailable");
+  }
+  return { profile, ...payload };
+};
 
 function withTimeout<T>(p: Promise<T>, ms = 6000): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -136,15 +154,28 @@ const api = {
   listSessions: async (): Promise<Session[]> =>
     mode.kind === "remote" ? invoke("remote_tmux_list_sessions", r({})) : invoke("tmux_list_sessions"),
 
-  listWindows: async (session: string): Promise<TmuxWindow[]> =>
-    mode.kind === "remote" ? invoke("remote_tmux_list_windows", r({ session })) : invoke("tmux_list_windows", { session }),
+  listWindows: async (session: string, profileOverride?: HostProfile | null): Promise<TmuxWindow[]> => {
+    const profile = resolveEffectiveProfile(mode, profileOverride);
+    if (profile) {
+      return invoke("remote_tmux_list_windows", { profile, session });
+    }
+    return invoke("tmux_list_windows", { session });
+  },
 
-  capturePane: async (session: string, windowIndex: number, windowId?: string | null): Promise<string> => {
-    const args: Record<string, any> = { session, window_index: windowIndex, lines: 200 };
+  capturePane: async (
+    session: string,
+    windowIndex: number,
+    windowId?: string | null,
+    lines = 200,
+    profileOverride?: HostProfile | null,
+  ): Promise<string> => {
+    const args: Record<string, any> = { session, window_index: windowIndex, lines };
     if (windowId) args.window_id = windowId;
-    return mode.kind === "remote"
-      ? invoke("remote_tmux_capture_pane", { payload: r(both(args)) })
-      : invoke("tmux_capture_pane", { payload: args });
+    const profile = resolveEffectiveProfile(mode, profileOverride);
+    if (profile) {
+      return invoke("remote_tmux_capture_pane", { payload: { ...both(args), profile } });
+    }
+    return invoke("tmux_capture_pane", { payload: args });
   },
   sendKeys: async (session: string, windowIndex: number, keys: string, withEnter = true, windowId?: string | null) => {
     if (mode.kind === "remote" && controlReady()) {
@@ -393,7 +424,10 @@ const waitForControlReady = async (timeoutMs = 3000) => {
   throw new Error("control session not ready");
 };
 
-const getWindows = async (session: string): Promise<TmuxWindow[]> => {
+const getWindows = async (
+  session: string,
+  profileOverride?: HostProfile | null,
+): Promise<TmuxWindow[]> => {
   if (controlReady()) {
     try {
       const chunks = await sendControlCommand(buildListWindowsCommand(session));
@@ -405,8 +439,8 @@ const getWindows = async (session: string): Promise<TmuxWindow[]> => {
   }
 
   return await withTimeout(
-    api.listWindows(session),
-    mode.kind === "remote" ? REMOTE_TIMEOUT_MS : 6000,
+    api.listWindows(session, profileOverride),
+    isRemoteLike(mode, profileOverride) ? REMOTE_TIMEOUT_MS : 6000,
   );
 };
 
@@ -415,6 +449,7 @@ const getPane = async (
   index: number | null,
   id: string | null,
   lines = 200,
+  profileOverride?: HostProfile | null,
 ): Promise<string> => {
   const safeIndex = index ?? 0;
   if (controlReady()) {
@@ -429,8 +464,8 @@ const getPane = async (
   }
 
   return await withTimeout(
-    api.capturePane(session, safeIndex, id),
-    mode.kind === "remote" ? REMOTE_TIMEOUT_MS : 6000,
+    api.capturePane(session, safeIndex, id, lines, profileOverride),
+    isRemoteLike(mode, profileOverride) ? REMOTE_TIMEOUT_MS : 6000,
   );
 };
 
@@ -611,7 +646,7 @@ async function loadWindows(session: string) {
 
     void (async () => {
       try {
-        const rawWindows = await getWindows(sessionName);
+        const rawWindows = await getWindows(sessionName, profile);
         if (token !== remoteSessionToken.current) return;
 
         const normalized = normalizeWindows(sessionName, rawWindows);
@@ -620,7 +655,7 @@ async function loadWindows(session: string) {
         const preferred = normalized.find((w) => w.active) ?? normalized[0] ?? null;
         let pane = "";
         if (preferred) {
-          pane = await getPane(sessionName, preferred.index, preferred.id ?? null);
+          pane = await getPane(sessionName, preferred.index, preferred.id ?? null, 200, profile);
         }
         if (token !== remoteSessionToken.current) return;
 
