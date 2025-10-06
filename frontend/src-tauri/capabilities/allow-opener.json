@@ -1,0 +1,10 @@
+{
+  "identifier": "allow-opener",
+  "description": "Allow opening paths/URLs.",
+  "windows": ["main"],
+  "permissions": [
+    "opener:allow-open-path",
+    "opener:allow-open-url",
+    "opener:allow-reveal-item-in-dir"
+  ]
+}

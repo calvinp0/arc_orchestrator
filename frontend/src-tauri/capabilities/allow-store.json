@@ -1,0 +1,16 @@
+{
+  "identifier": "allow-store",
+  "description": "Allow local key-value storage",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "store:allow-get",
+    "store:allow-set",
+    "store:allow-delete",
+    "store:allow-clear",
+    "store:allow-keys",
+    "store:allow-values",
+    "store:allow-load",
+    "store:allow-save"
+  ]
+}

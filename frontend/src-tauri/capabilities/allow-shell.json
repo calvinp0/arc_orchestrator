@@ -1,0 +1,15 @@
+{
+  "identifier": "allow-shell",
+  "description": "Allow running local commands (tmux, python).",
+  "windows": ["main"],
+  "permissions": [
+    {
+      "identifier": "shell:allow-execute",
+      "scopes": { "commands": ["tmux", "/usr/bin/tmux", "/bin/tmux"] }
+    },
+    {
+      "identifier": "shell:allow-spawn",
+      "scopes": { "commands": ["tmux", "/usr/bin/tmux", "/bin/tmux"] }
+    }
+  ]
+}

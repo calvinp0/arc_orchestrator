@@ -1,0 +1,6 @@
+{
+  "identifier": "allow-dialog",
+  "description": "Allow file/folder open dialogs",
+  "windows": ["main"],
+  "permissions": ["core:default", "dialog:allow-open"]
+}
