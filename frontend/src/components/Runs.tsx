@@ -593,53 +593,56 @@ const schedulePaneRefresh = () => {
 
   // --- loaders (TOP-LEVEL) ---
   async function refreshSessions() {
-  setMsg(mode.kind === "remote" ? `Connecting to ${remoteBadge}…` : "");
-  const token = ++inFlight.current.sessions;
-  try {
-    const s = await withTimeout(api.listSessions(), mode.kind === "remote" ? REMOTE_TIMEOUT_MS : 6000);
-    if (token !== inFlight.current.sessions) return;   // stale
-    setSessions(s);
-    const scope = cacheScope();
-    const allowed = new Set(s.map((x) => x.name));
-    const pruneBySessions = <T,>(map: Map<string, T>) => {
-      for (const key of Array.from(map.keys())) {
-        if (!key.startsWith(`${scope}/`)) continue;
-        const rest = key.slice(scope.length + 1);
-        const sessionKey = rest.split("/")[0] ?? "";
-        if (!allowed.has(sessionKey)) map.delete(key);
-      }
-    };
-    pruneBySessions(nameCacheRef.current);
-    pruneBySessions(paneCacheRef.current);
-    pruneBySessions(windowsCacheRef.current);
-    const keep = activeSession && s.some(x => x.name === activeSession);
-    if (!keep) {
-      if (s.length) {
-        if (mode.kind === "remote") {
-          selectSession(s[0].name);
+    setSessionLoading(true);
+    setMsg(mode.kind === "remote" ? `Connecting to ${remoteBadge}…` : "");
+    const token = ++inFlight.current.sessions;
+    try {
+      const s = await withTimeout(api.listSessions(), mode.kind === "remote" ? REMOTE_TIMEOUT_MS : 6000);
+      if (token !== inFlight.current.sessions) return; // stale
+      setSessions(s);
+      const scope = cacheScope();
+      const allowed = new Set(s.map((x) => x.name));
+      const pruneBySessions = <T,>(map: Map<string, T>) => {
+        for (const key of Array.from(map.keys())) {
+          if (!key.startsWith(`${scope}/`)) continue;
+          const rest = key.slice(scope.length + 1);
+          const sessionKey = rest.split("/")[0] ?? "";
+          if (!allowed.has(sessionKey)) map.delete(key);
+        }
+      };
+      pruneBySessions(nameCacheRef.current);
+      pruneBySessions(paneCacheRef.current);
+      pruneBySessions(windowsCacheRef.current);
+      const keep = activeSession && s.some((x) => x.name === activeSession);
+      if (!keep) {
+        if (s.length) {
+          if (mode.kind === "remote") {
+            selectSession(s[0].name);
+          } else {
+            setActiveSession(s[0].name);
+            setActiveWin(null);
+            setActiveWinId(null);
+            setPaneText("");
+          }
         } else {
-          setActiveSession(s[0].name);
+          setActiveSession(null);
           setActiveWin(null);
           setActiveWinId(null);
           setPaneText("");
         }
-      } else {
-        setActiveSession(null);
-        setActiveWin(null);
-        setActiveWinId(null);
-        setPaneText("");
       }
+      setMsg("");
+    } catch (e: any) {
+      if (token !== inFlight.current.sessions) return;
+      setMsg(`⚠️ Failed to read tmux sessions: ${String(e?.message ?? e)}`);
+      setSessions([]);
+      setActiveSession(null);
+      setActiveWin(null);
+      setActiveWinId(null);
+    } finally {
+      setSessionLoading(false);
     }
-    setMsg("");
-  } catch (e: any) {
-    if (token !== inFlight.current.sessions) return;
-    setMsg(`⚠️ Failed to read tmux sessions: ${String(e?.message ?? e)}`);
-    setSessions([]);
-    setActiveSession(null);
-    setActiveWin(null);
-    setActiveWinId(null);
   }
-}
 
 async function loadWindows(session: string) {
   try {
