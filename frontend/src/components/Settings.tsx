@@ -130,174 +130,246 @@ export default function Settings({ onSwitchToRuns }: SettingsProps) {
   }
 
   return (
-    <div style={{ display: "grid", gap: 16, maxWidth: 760 }}>
-      <h2>Settings</h2>
+    <div className="settings-panel">
+      <h2 className="settings-panel__title">Settings</h2>
       {onSwitchToRuns && (
-        <button onClick={onSwitchToRuns} style={{ justifySelf: "start" }}>
+        <button onClick={onSwitchToRuns} className="settings-panel__back" type="button">
           ← Back to Runs
         </button>
       )}
-      {err && <div style={{ color: "#ff6b6b" }}>{err}</div>}
+      {err && <div className="settings-panel__error">{err}</div>}
 
       {/* Python */}
-      <label style={{ display: "grid", gap: 6 }}>
+      <label className="settings-field">
         <span>Python path</span>
-        <div style={{ display: "flex", gap: 8 }}>
-          <input style={{ flex: 1 }} value={cfg.python_path}
-                 onChange={(e) => up({ python_path: e.target.value })}
-                 placeholder="/home/calvin/miniforge3/envs/arc_env/bin/python" />
-          <button onClick={async () => {
-            const p = await openDialog({ multiple: false }); if (p) up({ python_path: p as string });
-          }}>Browse…</button>
+        <div className="settings-field__row">
+          <input
+            value={cfg.python_path}
+            onChange={(e) => up({ python_path: e.target.value })}
+            placeholder="/home/calvin/miniforge3/envs/arc_env/bin/python"
+          />
+          <button
+            type="button"
+            onClick={async () => {
+              const p = await openDialog({ multiple: false });
+              if (p) up({ python_path: p as string });
+            }}
+          >
+            Browse…
+          </button>
         </div>
       </label>
 
       {/* ARC.py */}
-      <label style={{ display: "grid", gap: 6 }}>
+      <label className="settings-field">
         <span>ARC.py path</span>
-        <div style={{ display: "flex", gap: 8 }}>
-          <input style={{ flex: 1 }} value={cfg.arc_path}
-                 onChange={(e) => up({ arc_path: e.target.value })}
-                 placeholder="/home/calvin/Code/ARC/ARC.py" />
-          <button onClick={async () => {
-            const p = await openDialog({ multiple: false }); if (p) up({ arc_path: p as string });
-          }}>Browse…</button>
+        <div className="settings-field__row">
+          <input
+            value={cfg.arc_path}
+            onChange={(e) => up({ arc_path: e.target.value })}
+            placeholder="/home/calvin/Code/ARC/ARC.py"
+          />
+          <button
+            type="button"
+            onClick={async () => {
+              const p = await openDialog({ multiple: false });
+              if (p) up({ arc_path: p as string });
+            }}
+          >
+            Browse…
+          </button>
         </div>
       </label>
 
       {/* Work dir */}
-      <label style={{ display: "grid", gap: 6 }}>
+      <label className="settings-field">
         <span>Cluster work dir</span>
-        <input value={cfg.default_work_dir}
-               onChange={(e) => up({ default_work_dir: e.target.value })}
-               placeholder="/home/calvin.p/runs/ARC/PhD/RMG" />
+        <input
+          value={cfg.default_work_dir}
+          onChange={(e) => up({ default_work_dir: e.target.value })}
+          placeholder="/home/calvin.p/runs/ARC/PhD/RMG"
+        />
       </label>
 
       {/* Concurrency */}
-      <label style={{ display: "grid", gap: 6 }}>
+      <label className="settings-field settings-field--compact">
         <span>Concurrency cap</span>
-        <input type="number" min={1} max={64}
-               value={cfg.concurrency_cap}
-               onChange={(e) => up({ concurrency_cap: Number(e.target.value) || 1 })} />
+        <input
+          type="number"
+          min={1}
+          max={64}
+          value={cfg.concurrency_cap}
+          onChange={(e) => up({ concurrency_cap: Number(e.target.value) || 1 })}
+        />
       </label>
 
       {/* tmux path */}
-      <label style={{ display: "grid", gap: 6 }}>
+      <label className="settings-field">
         <span>tmux path (optional)</span>
-        <div style={{ display: "flex", gap: 8 }}>
-          <input style={{ flex: 1 }} value={cfg.tmux_path ?? ""}
-                 onChange={(e) => up({ tmux_path: e.target.value })}
-                 placeholder="Leave blank to use tmux from PATH" />
-          <button onClick={async () => {
-            const p = await openDialog({ multiple: false }); if (p) up({ tmux_path: p as string });
-          }}>Browse…</button>
+        <div className="settings-field__row">
+          <input
+            value={cfg.tmux_path ?? ""}
+            onChange={(e) => up({ tmux_path: e.target.value })}
+            placeholder="Leave blank to use tmux from PATH"
+          />
+          <button
+            type="button"
+            onClick={async () => {
+              const p = await openDialog({ multiple: false });
+              if (p) up({ tmux_path: p as string });
+            }}
+          >
+            Browse…
+          </button>
         </div>
-        <div style={{ fontSize: 12, opacity: 0.8 }}>
+        <div className="settings-hint">
           Don’t have tmux?{" "}
-          <a href="#" onClick={(e) => { e.preventDefault(); openUrl("https://github.com/tmux/tmux/wiki/Installing"); }}>
+          <a
+            href="#"
+            onClick={(e) => {
+              e.preventDefault();
+              openUrl("https://github.com/tmux/tmux/wiki/Installing");
+            }}
+          >
             Installation guide
           </a>
         </div>
       </label>
 
       {/* File ops */}
-      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", paddingTop: 6 }}>
-        <button onClick={onSave}>Save</button>
-        <button onClick={onSaveAs}>Save As…</button>
-        <button onClick={onOpenFromFile}>Open…</button>
-        <span style={{ opacity: 0.8 }}>{status}</span>
-        {settingsPath && <code style={{ opacity: 0.7, fontSize: 12 }}>{settingsPath}</code>}
+      <div className="settings-actions">
+        <button type="button" onClick={onSave}>Save</button>
+        <button type="button" onClick={onSaveAs}>Save As…</button>
+        <button type="button" onClick={onOpenFromFile}>Open…</button>
+        <span className="settings-status">{status}</span>
+        <span className="spacer" />
+        {settingsPath && <code className="path">{settingsPath}</code>}
       </div>
 
       {/* Remote (SSH) */}
-      <section style={{ display: "grid", gap: 12, paddingTop: 12 }}>
-        <h3>Remote server (SSH)</h3>
+      <section className="settings-panel__remote">
+        <div className="settings-panel__remote-header">
+          <h3>Remote server (SSH)</h3>
+          <div className="settings-panel__remote-actions">
+            <button type="button" onClick={testRemote}>Log in</button>
+            <span className="settings-status">{status}</span>
+          </div>
+        </div>
 
-        <label style={{ display: "grid", gap: 6 }}>
-          <span>Host</span>
-          <input placeholder="hpc.example.edu"
-                 value={cfg.remote?.host ?? ""}
-                 onChange={(e) => upRemote({ host: e.target.value })} />
-        </label>
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          <label style={{ display: "grid", gap: 6 }}>
-            <span>Port</span>
-            <input type="number" min={1} max={65535}
-                   value={cfg.remote?.port ?? 22}
-                   onChange={(e) => upRemote({ port: Number(e.target.value) || 22 })} />
+        <div className="settings-panel__remote-grid">
+          <label className="settings-field settings-field--span-2">
+            <span>Host</span>
+            <input
+              placeholder="hpc.example.edu"
+              value={cfg.remote?.host ?? ""}
+              onChange={(e) => upRemote({ host: e.target.value })}
+            />
           </label>
-          <label style={{ display: "grid", gap: 6 }}>
+
+          <label className="settings-field">
+            <span>Port</span>
+            <input
+              type="number"
+              min={1}
+              max={65535}
+              value={cfg.remote?.port ?? 22}
+              onChange={(e) => upRemote({ port: Number(e.target.value) || 22 })}
+            />
+          </label>
+
+          <label className="settings-field">
             <span>User</span>
-            <input placeholder="calvin"
-                   value={cfg.remote?.user ?? ""}
-                   onChange={(e) => upRemote({ user: e.target.value })} />
+            <input
+              placeholder="calvin"
+              value={cfg.remote?.user ?? ""}
+              onChange={(e) => upRemote({ user: e.target.value })}
+            />
           </label>
         </div>
 
-        <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
-          <label><input type="radio" name="rauth"
-                        checked={(cfg.remote?.auth ?? "agent") === "agent"}
-                        onChange={() => upRemote({ auth: "agent", use_agent: true })} /> SSH agent</label>
-          <label><input type="radio" name="rauth"
-                        checked={cfg.remote?.auth === "key"}
-                        onChange={() => upRemote({ auth: "key", use_agent: false })} /> Key file</label>
-          <label><input type="radio" name="rauth"
-                        checked={cfg.remote?.auth === "password"}
-                        onChange={() => upRemote({ auth: "password", use_agent: false })} /> Password</label>
+        <div className="settings-panel__auth">
+          <label>
+            <input
+              type="radio"
+              name="rauth"
+              checked={(cfg.remote?.auth ?? "agent") === "agent"}
+              onChange={() => upRemote({ auth: "agent", use_agent: true })}
+            />
+            <span>SSH agent</span>
+          </label>
+          <label>
+            <input
+              type="radio"
+              name="rauth"
+              checked={cfg.remote?.auth === "key"}
+              onChange={() => upRemote({ auth: "key", use_agent: false })}
+            />
+            <span>Key file</span>
+          </label>
+          <label>
+            <input
+              type="radio"
+              name="rauth"
+              checked={cfg.remote?.auth === "password"}
+              onChange={() => upRemote({ auth: "password", use_agent: false })}
+            />
+            <span>Password</span>
+          </label>
         </div>
 
         {cfg.remote?.auth === "key" && (
-          <div style={{ display: "grid", gap: 12 }}>
-            <label style={{ display: "grid", gap: 6 }}>
+          <div className="settings-panel__remote-grid">
+            <label className="settings-field settings-field--span-2">
               <span>Private key path</span>
-              <div style={{ display: "flex", gap: 8 }}>
-                <input style={{ flex: 1 }} placeholder="~/.ssh/id_ed25519"
-                       value={cfg.remote?.key_path ?? ""}
-                       onChange={(e) => upRemote({ key_path: e.target.value })} />
-                <button onClick={async () => {
-                  const p = await openDialog({ multiple: false });
-                  if (p) upRemote({ key_path: p as string });
-                }}>Browse…</button>
+              <div className="settings-field__row">
+                <input
+                  placeholder="~/.ssh/id_ed25519"
+                  value={cfg.remote?.key_path ?? ""}
+                  onChange={(e) => upRemote({ key_path: e.target.value })}
+                />
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const p = await openDialog({ multiple: false });
+                    if (p) upRemote({ key_path: p as string });
+                  }}
+                >
+                  Browse…
+                </button>
               </div>
             </label>
-            <label style={{ display: "grid", gap: 6 }}>
+            <label className="settings-field">
               <span>Key passphrase (optional)</span>
-              <input type="password"
-                     value={cfg.remote?.key_pass ?? ""}
-                     onChange={(e) => upRemote({ key_pass: e.target.value })} />
+              <input
+                type="password"
+                value={cfg.remote?.key_pass ?? ""}
+                onChange={(e) => upRemote({ key_pass: e.target.value })}
+              />
             </label>
           </div>
         )}
 
         {cfg.remote?.auth === "password" && (
-          <label style={{ display: "grid", gap: 6 }}>
+          <label className="settings-field">
             <span>Password</span>
-            <div style={{ display: "flex", gap: 8 }}>
+            <div className="settings-field__row">
               <input
                 type={showPw ? "text" : "password"}
                 value={remotePassword}
                 onChange={(e) => {
                   const pw = e.target.value;
-                  setRemotePwLocal(pw);       // local input
-                  setRemotePwGlobal(pw);      // memory cache for Runs
+                  setRemotePwLocal(pw); // local input
+                  setRemotePwGlobal(pw); // memory cache for Runs
                 }}
                 autoComplete="new-password"
               />
-              <button type="button" onClick={() => setShowPw(s => !s)}>
+              <button type="button" onClick={() => setShowPw((s) => !s)}>
                 {showPw ? "Hide" : "Show"}
               </button>
             </div>
-            <small style={{ opacity: 0.7 }}>
-              Password is kept in memory only (cleared on app exit).
-            </small>
+            <small className="settings-hint">Password is kept in memory only (cleared on app exit).</small>
           </label>
         )}
-
-        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-          <button onClick={testRemote}>Log in</button>
-          <span style={{ opacity: 0.8 }}>{status}</span>
-        </div>
       </section>
     </div>
   );
