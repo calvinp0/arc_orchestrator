@@ -85,6 +85,12 @@ export const renameWindowsCacheEntry = (
   cache.set(sessionCacheKeyForScope(scope, newSession), existing);
 };
 
+export const remoteButtonAriaLabel = (remoteLoading: boolean, sessionLoading: boolean): string => {
+  if (remoteLoading) return "Remote (connecting…)";
+  if (sessionLoading) return "Remote (loading…)";
+  return "Remote";
+};
+
 const REMOTE_TIMEOUT_MS = 12000;
 
 const escapeArg = (value: string) => {
@@ -166,6 +172,8 @@ export default function Runs() {
     mode.kind === "remote"
       ? `${mode.profile.user}@${mode.profile.host}:${mode.profile.port ?? 22}`
       : "";
+  const remoteAriaLabel = remoteButtonAriaLabel(remoteLoading, sessionLoading);
+  const remoteSpinnerVisible = remoteLoading || sessionLoading;
   const paneDivRef = useRef<HTMLDivElement | null>(null);
   const timerRef = useRef<number | null>(null);
   const activeWinRef = useRef<number | null>(null);
@@ -1356,12 +1364,13 @@ async function onSendKeys(keys: string, enter = true) {
             className={`tab tab--condensed ${mode.kind === "remote" ? "tab--active" : ""}`}
             onClick={() => remoteCfg && switchToRemote(remoteCfg)}
             disabled={!remoteCfg || remoteLoading || sessionLoading}
+            aria-label={remoteAriaLabel}
           >
-            {remoteLoading
-              ? "Remote (connecting…)"
-              : sessionLoading
-                ? "Remote (loading…)"
-                : "Remote"}
+            <span className="tab__label">Remote</span>
+            <span
+              className={`tab__spinner${remoteSpinnerVisible ? " tab__spinner--visible" : ""}`}
+              aria-hidden="true"
+            />
           </button>
           {mode.kind === "remote" && controlDisconnected && controlRef.current && (
             <button

@@ -8,6 +8,7 @@ import {
   sessionCacheKeyForScope,
   renameWindowsCacheEntry,
   buildSendKeysControlCommand,
+  remoteButtonAriaLabel,
   type HostProfile,
   type Mode,
   type TmuxWindow,
@@ -156,5 +157,20 @@ describe("buildSendKeysControlCommand", () => {
       "send-keys -t arc:1 -l 'printf '\"'\"'a\\n'\"'\"''",
       "send-keys -t arc:1 Enter",
     ]);
+  });
+});
+
+describe("remoteButtonAriaLabel", () => {
+  it("prioritizes the remote loading state", () => {
+    expect(remoteButtonAriaLabel(true, true)).toBe("Remote (connecting…)");
+    expect(remoteButtonAriaLabel(true, false)).toBe("Remote (connecting…)");
+  });
+
+  it("falls back to the session loading label", () => {
+    expect(remoteButtonAriaLabel(false, true)).toBe("Remote (loading…)");
+  });
+
+  it("returns the base label when idle", () => {
+    expect(remoteButtonAriaLabel(false, false)).toBe("Remote");
   });
 });
