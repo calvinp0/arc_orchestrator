@@ -12,7 +12,7 @@ import {
 } from "../lib/windowCache";
 
 type Session = { name: string; windows: number; attached: boolean };
-type TmuxWindow = { index: number; id: string; name: string; active: boolean; panes: number };
+export type TmuxWindow = { index: number; id: string; name: string; active: boolean; panes: number };
 export type HostProfile = {
   host: string;
   port?: number;
@@ -60,6 +60,31 @@ export const resolveEffectiveProfile = (
 export const isRemoteLike = (mode: Mode, profileOverride?: HostProfile | null): boolean =>
   resolveEffectiveProfile(mode, profileOverride) !== null;
 
+export const scopeKeyForProfile = (profile?: HostProfile | null): string => {
+  if (!profile) return "local";
+  const port = profile.port ?? 22;
+  return `remote:${profile.user}@${profile.host}:${port}`;
+};
+
+export const sessionCacheKeyForScope = (scope: string, session: string): string => `${scope}/${session}`;
+
+export const sessionCacheKey = (session: string, profile?: HostProfile | null): string =>
+  sessionCacheKeyForScope(scopeKeyForProfile(profile), session);
+
+export const renameWindowsCacheEntry = (
+  cache: Map<string, TmuxWindow[]>,
+  scope: string,
+  oldSession: string,
+  newSession: string,
+): void => {
+  if (oldSession === newSession) return;
+  const oldKey = sessionCacheKeyForScope(scope, oldSession);
+  const existing = cache.get(oldKey);
+  if (!existing) return;
+  cache.delete(oldKey);
+  cache.set(sessionCacheKeyForScope(scope, newSession), existing);
+};
+
 const REMOTE_TIMEOUT_MS = 12000;
 
 export default function Runs() {
@@ -86,6 +111,7 @@ export default function Runs() {
   const inFlight = useRef({ listWindows: 0, capture: 0, sessions: 0 });
   const nameCacheRef = useRef(new Map<string, string>());
   const paneCacheRef = useRef(new Map<string, string>());
+  const windowsCacheRef = useRef(new Map<string, TmuxWindow[]>());
   const remoteSessionToken = useRef(0);
   const remoteBadge =
     mode.kind === "remote"
@@ -505,20 +531,21 @@ const schedulePaneRefresh = () => {
 };
 
 
-  const cacheScope = () => {
+  const cacheScope = (profileOverride?: HostProfile | null) => {
+    if (profileOverride) return scopeKeyForProfile(profileOverride);
     if (mode.kind !== "remote") return "local";
-    const prof = mode.profile;
-    return `remote:${prof.user}@${prof.host}:${prof.port ?? 22}`;
+    return scopeKeyForProfile(mode.profile);
   };
 
-  const cacheKeyFor = (sessionName: string, w: TmuxWindow): string =>
-    buildWindowCacheKey(cacheScope(), sessionName, w.index, w.id ?? null);
+  const cacheKeyFor = (sessionName: string, w: TmuxWindow, profileOverride?: HostProfile | null): string =>
+    buildWindowCacheKey(cacheScope(profileOverride), sessionName, w.index, w.id ?? null);
 
   const paneKeyFromParts = (
     sessionName: string,
     index: number,
     id?: string | null,
-  ): string => buildWindowCacheKey(cacheScope(), sessionName, index, id ?? null);
+    profileOverride?: HostProfile | null,
+  ): string => buildWindowCacheKey(cacheScope(profileOverride), sessionName, index, id ?? null);
 
   const normalizeWindows = (sessionName: string, ws: TmuxWindow[]): TmuxWindow[] => {
     const byKey = new Map<string, TmuxWindow>();
@@ -584,6 +611,7 @@ const schedulePaneRefresh = () => {
     };
     pruneBySessions(nameCacheRef.current);
     pruneBySessions(paneCacheRef.current);
+    pruneBySessions(windowsCacheRef.current);
     const keep = activeSession && s.some(x => x.name === activeSession);
     if (!keep) {
       if (s.length) {
@@ -620,6 +648,7 @@ async function loadWindows(session: string) {
     const normalized = normalizeWindows(session, ws);
     console.debug("loadWindows", session, normalized);
     setWindows(normalized);
+    windowsCacheRef.current.set(sessionCacheKeyForScope(cacheScope(), session), normalized);
     pruneWindowCache(paneCacheRef.current, cacheScope(), session, normalized);
     const currentActive = activeWinRef.current;
     if (!normalized.length) {
@@ -671,10 +700,30 @@ async function loadWindows(session: string) {
     setSessionLoading(true);
     setMsg(`Loading ${sessionName}…`);
     setPollPaused(true);
+    const scope = cacheScope(profile);
+    const cacheKey = sessionCacheKeyForScope(scope, sessionName);
+    const cachedWindows = windowsCacheRef.current.get(cacheKey) ?? null;
+
     setActiveWin(null);
     setActiveWinId(null);
-    setWindows([]);
-    setPaneText("");
+
+    if (cachedWindows && cachedWindows.length) {
+      setWindows(cachedWindows);
+      const cachedPreferred = cachedWindows.find((w) => w.active) ?? cachedWindows[0] ?? null;
+      if (cachedPreferred) {
+        setActiveWin(cachedPreferred.index);
+        setActiveWinId(cachedPreferred.id ?? null);
+        activeWinRef.current = cachedPreferred.index;
+        activeWinIdRef.current = cachedPreferred.id ?? null;
+        const cachedPane = paneCacheRef.current.get(cacheKeyFor(sessionName, cachedPreferred, profile));
+        setPaneText(cachedPane ?? "Loading…");
+      } else {
+        setPaneText("Loading…");
+      }
+    } else {
+      setWindows([]);
+      setPaneText("Loading…");
+    }
 
     const token = ++remoteSessionToken.current;
 
@@ -685,19 +734,20 @@ async function loadWindows(session: string) {
 
         const normalized = normalizeWindows(sessionName, rawWindows);
         console.debug("selectSession update", sessionName, normalized);
+        windowsCacheRef.current.set(cacheKey, normalized);
 
         const preferred = normalized.find((w) => w.active) ?? normalized[0] ?? null;
         let pane = "";
         if (preferred) {
-          const cached = paneCacheRef.current.get(cacheKeyFor(sessionName, preferred));
+          const cached = paneCacheRef.current.get(cacheKeyFor(sessionName, preferred, profile));
           if (cached) setPaneText(cached);
           pane = await getPane(sessionName, preferred.index, preferred.id ?? null, 200, profile);
-          paneCacheRef.current.set(cacheKeyFor(sessionName, preferred), pane || " ");
+          paneCacheRef.current.set(cacheKeyFor(sessionName, preferred, profile), pane || " ");
         }
         if (token !== remoteSessionToken.current) return;
 
         setWindows(normalized);
-        pruneWindowCache(paneCacheRef.current, cacheScope(), sessionName, normalized);
+        pruneWindowCache(paneCacheRef.current, scope, sessionName, normalized);
         if (preferred) {
           setActiveWin(preferred.index);
           setActiveWinId(preferred.id);
@@ -743,6 +793,7 @@ async function loadWindows(session: string) {
     setSessionLoading(false);
     nameCacheRef.current.clear();
     paneCacheRef.current.clear();
+    windowsCacheRef.current.clear();
     remoteSessionToken.current++;
     if (timerRef.current) {
       window.clearTimeout(timerRef.current);
@@ -753,43 +804,49 @@ async function loadWindows(session: string) {
 
   // --- guarded remote switch (TOP-LEVEL) ---
   async function switchToRemote(profile: HostProfile) {
-  stopControlSession();
-  resetUiForMode();  // clear all local state so UI doesn't mix Local + Remote
+    stopControlSession();
+    resetUiForMode();  // clear all local state so UI doesn't mix Local + Remote
 
-  setRemoteLoading(true);
+    setRemoteLoading(true);
+    setSessionLoading(true);
 
-  const pw = profile.auth === "password" ? await getRemotePassword() : undefined;
-  const prof: HostProfile = { ...profile, password: pw };
-  setMode({ kind: "remote", profile: prof });
-  setMsg(`Connecting to ${prof.user}@${prof.host}:${prof.port ?? 22}…`);
+    const baseProfile: HostProfile = { ...profile };
+    const connectMsg = `Connecting to ${profile.user}@${profile.host}:${profile.port ?? 22}…`;
+    setMode({ kind: "remote", profile: baseProfile });
+    setMsg(connectMsg);
 
-  try {
-    // 🔹 Step 1: quick ping test (forces SSH connection + shows you if it's hanging)
-    const ping = await withTimeout(invoke<string>("remote_ping", { profile: prof }), REMOTE_TIMEOUT_MS);
-    setMsg(`Connected to ${prof.user}@${prof.host} — ${ping}`);
+    try {
+      const pw = profile.auth === "password" ? await getRemotePassword() : undefined;
+      const prof: HostProfile = { ...profile, password: pw };
+      setMode({ kind: "remote", profile: prof });
+      setMsg(connectMsg);
 
-    // 🔹 Step 2: fetch sessions *explicitly* using this profile (not via api.listSessions)
-    const s = await withTimeout(invoke<Session[]>("remote_tmux_list_sessions", { profile: prof }), REMOTE_TIMEOUT_MS);
+      // 🔹 Step 1: quick ping test (forces SSH connection + shows you if it's hanging)
+      const ping = await withTimeout(invoke<string>("remote_ping", { profile: prof }), REMOTE_TIMEOUT_MS);
+      setMsg(`Connected to ${prof.user}@${prof.host} — ${ping}`);
 
-    // 🔹 Step 3: update your UI
-    setSessions(s);
-    setRemoteLoading(false);
-    if (s.length) {
-      startControlSession(s[0].name, prof);
-      selectSession(s[0].name, prof);
-    } else {
-      setActiveSession(null);
-      setMsg(`Found 0 tmux session(s) on ${prof.host}`);
+      // 🔹 Step 2: fetch sessions *explicitly* using this profile (not via api.listSessions)
+      const s = await withTimeout(invoke<Session[]>("remote_tmux_list_sessions", { profile: prof }), REMOTE_TIMEOUT_MS);
+
+      // 🔹 Step 3: update your UI
+      setSessions(s);
+      setRemoteLoading(false);
+      if (s.length) {
+        startControlSession(s[0].name, prof);
+        selectSession(s[0].name, prof);
+      } else {
+        setActiveSession(null);
+        setMsg(`Found 0 tmux session(s) on ${prof.host}`);
+        setSessionLoading(false);
+      }
+    } catch (e: any) {
+      setMsg(`⚠️ Remote error: ${String(e?.message ?? e)}`);
+      setPaneText(`<< remote error: ${String(e)} >>`);
+      setMode({ kind: "local" });
+      setRemoteLoading(false);
       setSessionLoading(false);
     }
-  } catch (e: any) {
-    setMsg(`⚠️ Remote error: ${String(e?.message ?? e)}`);
-    setPaneText(`<< remote error: ${String(e)} >>`);
-    setMode({ kind: "local" });
-    setRemoteLoading(false);
-    setSessionLoading(false);
   }
-}
 
 function switchToLocal() {
   stopControlSession();
@@ -856,6 +913,7 @@ function switchToLocal() {
     const scope = cacheScope();
     clearWindowCacheForSession(nameCacheRef.current, scope, activeSession);
     clearWindowCacheForSession(paneCacheRef.current, scope, activeSession);
+    windowsCacheRef.current.delete(sessionCacheKeyForScope(scope, activeSession));
     await api.killSession(activeSession);
     setActiveSession(null);
     await refreshSessions();
@@ -869,30 +927,51 @@ function switchToLocal() {
       setMsg(`⚠️ Session "${next}" already exists.`);
       return;
     }
+    setBusy(true);
+    setPollPaused(true);
+    setSessionLoading(true);
     try {
-      setBusy(true);
-      setPollPaused(true);
-      await api.renameSession(sessionName, next);
-      const scope = cacheScope();
-      renameSessionInCache(nameCacheRef.current, scope, sessionName, next);
-      renameSessionInCache(paneCacheRef.current, scope, sessionName, next);
-      setSessions((prev) =>
-        prev?.map((s) => (s.name === sessionName ? { ...s, name: next } : s)) ?? prev,
+      let renameErr: any = null;
+      try {
+        await api.renameSession(sessionName, next);
+      } catch (err) {
+        renameErr = err;
+      }
+
+      const refreshed = await withTimeout(
+        api.listSessions(),
+        mode.kind === "remote" ? REMOTE_TIMEOUT_MS : 6000,
       );
-      const wasActive = activeSession === sessionName;
-      if (wasActive) {
-        setActiveSession(next);
+      setSessions(refreshed);
+
+      const scope = cacheScope();
+      const renamed = refreshed.some((s) => s.name === next);
+      if (renamed) {
+        renameSessionInCache(nameCacheRef.current, scope, sessionName, next);
+        renameSessionInCache(paneCacheRef.current, scope, sessionName, next);
+        renameWindowsCacheEntry(windowsCacheRef.current, scope, sessionName, next);
+
+        if (activeSession === sessionName) {
+          setActiveSession(next);
+          if (mode.kind === "remote") {
+            selectSession(next);
+          }
+        }
+        setMsg(`Renamed session to "${next}".`);
+        return;
       }
-      await refreshSessions();
-      if (wasActive && mode.kind === "remote") {
-        selectSession(next);
+
+      if (renameErr) {
+        throw renameErr;
       }
-      setMsg(`Renamed session to "${next}".`);
+
+      setMsg(`⚠️ Session rename did not apply ("${next}" not found).`);
     } catch (e: any) {
       setMsg(`⚠️ Rename session failed: ${String(e?.message ?? e)}`);
     } finally {
       setBusy(false);
       setPollPaused(false);
+      setSessionLoading(false);
     }
   }
 async function onCreateWindow() {
@@ -997,6 +1076,10 @@ async function onSendKeys(keys: string, enter = true) {
       const normalized = normalizeWindows(activeSession, remoteWins);
       console.debug("ensureWindow list", activeSession, normalized);
       setWindows(normalized);
+      windowsCacheRef.current.set(
+        sessionCacheKeyForScope(cacheScope(), activeSession),
+        normalized,
+      );
       pruneWindowCache(paneCacheRef.current, cacheScope(), activeSession, normalized);
       const refreshed = normalized.find((w) => w.index === index) ?? null;
       if (refreshed && index === activeWin) {
@@ -1227,6 +1310,12 @@ async function onSendKeys(keys: string, enter = true) {
         </div>
       )}
       {msg && <div>{msg}</div>}
+
+      {(remoteLoading || sessionLoading) && (
+        <div className="loading-strip" role="progressbar" aria-hidden="true">
+          <div className="loading-strip__bar" />
+        </div>
+      )}
 
       <div className="toolbar">
         <div className="tabs-left" style={{ display: "flex", gap: 8 }}>

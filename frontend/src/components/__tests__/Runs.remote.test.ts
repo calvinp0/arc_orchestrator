@@ -3,8 +3,13 @@ import {
   cloneProfile,
   resolveEffectiveProfile,
   isRemoteLike,
+  scopeKeyForProfile,
+  sessionCacheKey,
+  sessionCacheKeyForScope,
+  renameWindowsCacheEntry,
   type HostProfile,
   type Mode,
+  type TmuxWindow,
 } from "../Runs";
 
 describe("resolveEffectiveProfile", () => {
@@ -87,5 +92,39 @@ describe("cloneProfile", () => {
     expect(profile.key_path).toBe("/id_ed25519");
     expect(profile.key_pass).toBe("passphrase");
     expect(profile.password).toBe("ignored");
+  });
+});
+
+describe("cache helpers", () => {
+  it("builds scope keys with sensible defaults", () => {
+    expect(scopeKeyForProfile(null)).toBe("local");
+    expect(scopeKeyForProfile()).toBe("local");
+
+    const remote: HostProfile = { host: "node", user: "ops" };
+    expect(scopeKeyForProfile(remote)).toBe("remote:ops@node:22");
+
+    const custom: HostProfile = { host: "node", user: "ops", port: 2224 };
+    expect(scopeKeyForProfile(custom)).toBe("remote:ops@node:2224");
+  });
+
+  it("generates cache keys and renames entries", () => {
+    const profile: HostProfile = { host: "node", user: "ops", port: 2200 };
+    const cacheKey = sessionCacheKey("alpha", profile);
+    expect(cacheKey).toBe("remote:ops@node:2200/alpha");
+
+    const cache = new Map<string, TmuxWindow[]>();
+    const scope = scopeKeyForProfile(profile);
+    const initial: TmuxWindow[] = [
+      { index: 0, id: "@1", name: "shell", active: true, panes: 1 },
+    ];
+    cache.set(sessionCacheKeyForScope(scope, "alpha"), initial);
+
+    renameWindowsCacheEntry(cache, scope, "alpha", "beta");
+    expect(cache.has(sessionCacheKeyForScope(scope, "alpha"))).toBe(false);
+    expect(cache.get(sessionCacheKeyForScope(scope, "beta"))).toBe(initial);
+
+    // renaming a non-existent entry is a no-op
+    renameWindowsCacheEntry(cache, scope, "missing", "noop");
+    expect(cache.size).toBe(1);
   });
 });
