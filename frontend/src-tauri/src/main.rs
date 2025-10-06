@@ -269,6 +269,28 @@ fn tmux_new_session(session: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn tmux_rename_session(payload: JsonValue) -> Result<(), String> {
+    let path = which("tmux").map_err(|e| e.to_string())?;
+    let session = payload
+        .get("session")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "missing session".to_string())?;
+    let new_name = payload
+        .get("new_name")
+        .and_then(|v| v.as_str())
+        .or_else(|| payload.get("newName").and_then(|v| v.as_str()))
+        .ok_or_else(|| "missing new_name/newName".to_string())?;
+    let out = PCommand::new(&path)
+        .args(["rename-session", "-t", session, new_name])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
 fn tmux_list_windows(session: String) -> Result<Vec<TmuxWindow>, String> {
     let path = which("tmux").map_err(|e| e.to_string())?;
     let out = PCommand::new(&path)
@@ -968,6 +990,39 @@ fn remote_tmux_new_session(profile: HostProfile, session: String) -> Result<(), 
 }
 
 #[tauri::command]
+fn remote_tmux_rename_session(payload: JsonValue) -> Result<(), String> {
+    let profile: HostProfile = serde_json::from_value(
+        payload
+            .get("profile")
+            .cloned()
+            .ok_or_else(|| "missing profile".to_string())?,
+    )
+    .map_err(|e| format!("invalid profile: {}", e))?;
+    let c = creds_from(&profile);
+    let session = payload
+        .get("session")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "missing session".to_string())?;
+    let new_name = payload
+        .get("new_name")
+        .and_then(|v| v.as_str())
+        .or_else(|| payload.get("newName").and_then(|v| v.as_str()))
+        .ok_or_else(|| "missing new_name/newName".to_string())?;
+    let out = ssh_exec(
+        &c,
+        &format!(
+            "tmux rename-session -t {} {}",
+            shell_escape::escape(session.into()),
+            shell_escape::escape(new_name.into())
+        ),
+    )?;
+    if out.code != 0 {
+        return Err(out.stderr);
+    }
+    Ok(())
+}
+
+#[tauri::command]
 fn remote_tmux_kill_session(profile: HostProfile, session: String) -> Result<(), String> {
     let c = creds_from(&profile);
     let out = ssh_exec(
@@ -1011,6 +1066,7 @@ fn main() {
             tmux_start_server,
             tmux_kill_session,
             tmux_new_session,
+            tmux_rename_session,
             tmux_list_windows,
             tmux_new_window,
             tmux_capture_pane,
@@ -1030,6 +1086,7 @@ fn main() {
             remote_tmux_kill_window,
             remote_tmux_rename_window,
             remote_tmux_new_session,
+            remote_tmux_rename_session,
             remote_tmux_kill_session,
             remote_tmux_select_window,
             remote_tmux_control_start,

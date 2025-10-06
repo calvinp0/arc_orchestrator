@@ -295,7 +295,7 @@ export default function Settings({ onSwitchToRuns }: SettingsProps) {
         )}
 
         <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-          <button onClick={testRemote}>Test remote</button>
+          <button onClick={testRemote}>Log in</button>
           <span style={{ opacity: 0.8 }}>{status}</span>
         </div>
       </section>
